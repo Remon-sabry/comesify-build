@@ -79,8 +79,10 @@ def render(inp,src,out,ass):
     clip=inp['clip']; edit=inp.get('edit') or {}; layout=edit.get('layout','manual'); dur=max(.01,float(clip['end'])-float(clip['start'])); pts=edit.get('keyframes') or []
     face=edit.get('faceLayout'); hybrid=layout=='auto' and isinstance(face,dict) and isinstance(face.get('splitSegments'),list) and face.get('splitSegments') and face.get('top') and face.get('bottom')
     fullsplit=bool(edit.get('splitScreen')) and layout=='split' and not hybrid
-    enc=['-c:v','h264_nvenc','-preset','p4','-cq','24','-c:a','aac','-b:a','128k','-movflags','+faststart','-y',out]
-    # fallback to software x264 if NVENC is unavailable on the selected GPU image.
+    # NVENC is the intended path. The image must be deployed on a GPU worker with
+    # NVIDIA drivers exposed; otherwise fail loudly after the software fallback so
+    # a misconfigured endpoint is not mistaken for a slow GPU render.
+    enc=['-c:v','h264_nvenc','-preset','p1','-cq','24','-c:a','aac','-b:a','128k','-movflags','+faststart','-y',out]
     if hybrid or fullsplit:
         if fullsplit:
             half,lc=static_half('left'); _,rc=static_half('right'); off=half+24
@@ -111,7 +113,7 @@ def render(inp,src,out,ass):
         enc2=['-c:v','libx264','-preset','veryfast','-crf','24','-c:a','aac','-b:a','128k','-movflags','+faststart','-y',out]
         args2=args[:-len(enc)]+enc2
         r=subprocess.run(['ffmpeg','-hide_banner','-loglevel','error']+args2,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        if r.returncode!=0: raise RuntimeError(r.stderr.decode(errors='ignore')[-3000:])
+        if r.returncode!=0: raise RuntimeError('NVENC and libx264 both failed. NVENC error: '+r.stderr.decode(errors='ignore')[-1400:])
 
 def handler(job):
     inp=job['input']; tmp=tempfile.mkdtemp(prefix='ias-rp-'); src=os.path.join(tmp,'source.mp4'); out=os.path.join(tmp,'result.mp4'); ass=os.path.join(tmp,'caps.ass')
@@ -122,9 +124,15 @@ def handler(job):
                 for chunk in rr.iter_content(1024*1024):
                     if chunk:f.write(chunk)
         with open(ass,'w',encoding='utf-8') as f:f.write(make_ass(inp['clip'],inp.get('caption_style','viral'),inp.get('edit') or {},inp.get('words') or [],inp.get('language','en')))
+        # Do not leave the dashboard looking frozen while FFmpeg is working.
+        # The callback endpoint accepts this JSON progress event without a file.
+        try: requests.post(inp['callback_url'],json={'status':'IN_PROGRESS'},timeout=20).raise_for_status()
+        except Exception: pass
         render(inp,src,out,ass)
         with open(out,'rb') as f:
-            rr=requests.post(inp['callback_url'],files={'file':('render.mp4',f,'video/mp4')},data={'status':'COMPLETED'},timeout=180)
+            # Uploading the result can be slower than encoding, especially through
+            # a WordPress proxy. Give the callback its own generous timeout.
+            rr=requests.post(inp['callback_url'],files={'file':('render.mp4',f,'video/mp4')},data={'status':'COMPLETED'},timeout=600)
             rr.raise_for_status()
         return {'status':'COMPLETED'}
     except Exception as e:
