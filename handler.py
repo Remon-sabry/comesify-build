@@ -142,6 +142,6 @@ def handler(job):
     finally:
         import shutil; shutil.rmtree(tmp,ignore_errors=True)
 
-if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+runpod.serverless.start({"handler": handler})
+
 
