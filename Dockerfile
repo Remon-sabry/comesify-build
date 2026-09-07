@@ -21,6 +21,7 @@ COPY NotoEmoji-Regular.ttf /opt/ias-fonts/NotoEmoji-Regular.ttf
 COPY NotoSansArabic-Regular.ttf /opt/ias-fonts/NotoSansArabic-Regular.ttf
 COPY NotoSansDevanagari-Regular.ttf /opt/ias-fonts/NotoSansDevanagari-Regular.ttf
 
+COPY worker.py /worker.py
 COPY handler.py /handler.py
 
-CMD ["python3", "/handler.py"]
+CMD ["python3", "-u", "/handler.py"]
